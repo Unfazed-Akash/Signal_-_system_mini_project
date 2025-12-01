@@ -14,12 +14,28 @@ NORMAL_ROWS = 45000
 MULE_ROWS = 4000
 CIRCULAR_ROWS = 1000
 
-NEW_DELHI_LAT = 28.6139
-NEW_DELHI_LNG = 77.2090
-RADIUS_KM = 50
+# City Configuration
+CITIES = {
+    'Delhi': {'lat': 28.6139, 'lng': 77.2090, 'radius': 40},
+    'Mumbai': {'lat': 19.0760, 'lng': 72.8777, 'radius': 35},
+    'Bengaluru': {'lat': 12.9716, 'lng': 77.5946, 'radius': 30},
+    'Chennai': {'lat': 13.0827, 'lng': 80.2707, 'radius': 30},
+    'Kolkata': {'lat': 22.5726, 'lng': 88.3639, 'radius': 30},
+    'Lucknow': {'lat': 26.8467, 'lng': 80.9462, 'radius': 20},
+    'Indore': {'lat': 22.7196, 'lng': 75.8577, 'radius': 15}
+}
 
 # Helper function to generate random lat/lng within radius using Gaussian distribution
-def generate_location(center_lat, center_lng, radius_km):
+def generate_location(city_name):
+    city = CITIES.get(city_name)
+    if not city:
+        # Default to Delhi if not found
+        city = CITIES['Delhi']
+        
+    center_lat = city['lat']
+    center_lng = city['lng']
+    radius_km = city['radius']
+    
     # 1 degree lat ~= 111 km
     # 1 degree lng ~= 111 km * cos(lat)
     
@@ -41,8 +57,13 @@ def generate_data():
     
     # --- Scenario A: Normal Behavior (45,000 rows) ---
     print(f"Generating {NORMAL_ROWS} normal transactions...")
+    city_names = list(CITIES.keys())
+    
     for _ in range(NORMAL_ROWS):
-        lat, lng = generate_location(NEW_DELHI_LAT, NEW_DELHI_LNG, RADIUS_KM)
+        # Pick a random city for this transaction
+        city = random.choice(city_names)
+        lat, lng = generate_location(city)
+        
         data.append({
             'txn_id': fake.uuid4(),
             'sender_id': fake.uuid4(),
@@ -52,7 +73,8 @@ def generate_data():
             'lat': lat,
             'lng': lng,
             'device_id': fake.uuid4(),
-            'is_fraud': 0
+            'is_fraud': 0,
+            'city': city
         })
 
     # --- Scenario B: Mule Fan-Out Attack (4,000 rows) ---
@@ -66,7 +88,10 @@ def generate_data():
         
         # The "Tell": Same device and location for all receivers (or very close)
         fraud_device_id = fake.uuid4()
-        fraud_lat, fraud_lng = generate_location(NEW_DELHI_LAT, NEW_DELHI_LNG, RADIUS_KM)
+        
+        # Pick a random city for this fraud batch
+        fraud_city = random.choice(city_names)
+        fraud_lat, fraud_lng = generate_location(fraud_city)
         
         for _ in range(10):
             data.append({
@@ -78,19 +103,13 @@ def generate_data():
                 'lat': fraud_lat,
                 'lng': fraud_lng,
                 'device_id': fraud_device_id,
-                'is_fraud': 1
+                'is_fraud': 1,
+                'city': fraud_city
             })
 
     # --- Scenario C: Circular Trading (1,000 rows) ---
     # Logic: A -> B -> C -> A
     print(f"Generating {CIRCULAR_ROWS} Circular Trading transactions...")
-    # Each cycle is 3 transactions. 1000 rows / 3 per cycle ~= 333 cycles. 
-    # We'll do 333 cycles -> 999 rows. Add one random fraud to make it even 1000 or just do 334 cycles and trim.
-    # Let's do 333 cycles of 3 transactions = 999 rows. 
-    # To hit exactly 1000, we can just add one more standalone fraud or just do 334 and slice.
-    # Let's do 333 cycles and add one extra fraud row manually to match count exactly if needed, 
-    # or just accept 999/1002. The prompt says "1,000 rows". 
-    # Let's do 333 cycles of 3 = 999. Then 1 extra.
     
     cycles = CIRCULAR_ROWS // 3
     remainder = CIRCULAR_ROWS % 3
@@ -103,6 +122,10 @@ def generate_data():
         cycle_amount = round(random.uniform(100000, 500000), 2)
         cycle_time = fake.date_time_between(start_date='-30d', end_date='now')
         
+        # Pick a random city for this ring
+        ring_city = random.choice(city_names)
+        base_lat, base_lng = generate_location(ring_city)
+        
         # A -> B
         data.append({
             'txn_id': fake.uuid4(),
@@ -110,10 +133,11 @@ def generate_data():
             'receiver_id': user_b,
             'amount': cycle_amount,
             'timestamp': cycle_time,
-            'lat': NEW_DELHI_LAT + np.random.normal(0, 0.01),
-            'lng': NEW_DELHI_LNG + np.random.normal(0, 0.01),
+            'lat': base_lat + np.random.normal(0, 0.01),
+            'lng': base_lng + np.random.normal(0, 0.01),
             'device_id': fake.uuid4(),
-            'is_fraud': 1
+            'is_fraud': 1,
+            'city': ring_city
         })
         
         # B -> C
@@ -123,10 +147,11 @@ def generate_data():
             'receiver_id': user_c,
             'amount': cycle_amount,
             'timestamp': cycle_time + timedelta(minutes=random.randint(10, 60)),
-            'lat': NEW_DELHI_LAT + np.random.normal(0, 0.01),
-            'lng': NEW_DELHI_LNG + np.random.normal(0, 0.01),
+            'lat': base_lat + np.random.normal(0, 0.01),
+            'lng': base_lng + np.random.normal(0, 0.01),
             'device_id': fake.uuid4(),
-            'is_fraud': 1
+            'is_fraud': 1,
+            'city': ring_city
         })
         
         # C -> A
@@ -136,24 +161,28 @@ def generate_data():
             'receiver_id': user_a,
             'amount': cycle_amount,
             'timestamp': cycle_time + timedelta(minutes=random.randint(70, 120)),
-            'lat': NEW_DELHI_LAT + np.random.normal(0, 0.01),
-            'lng': NEW_DELHI_LNG + np.random.normal(0, 0.01),
+            'lat': base_lat + np.random.normal(0, 0.01),
+            'lng': base_lng + np.random.normal(0, 0.01),
             'device_id': fake.uuid4(),
-            'is_fraud': 1
+            'is_fraud': 1,
+            'city': ring_city
         })
 
     # Fill remainder if any (should be 1 row if 1000 total)
     for _ in range(remainder):
+         rem_city = random.choice(city_names)
+         rem_lat, rem_lng = generate_location(rem_city)
          data.append({
             'txn_id': fake.uuid4(),
             'sender_id': fake.uuid4(),
             'receiver_id': fake.uuid4(),
             'amount': 150000.00,
             'timestamp': fake.date_time_between(start_date='-30d', end_date='now'),
-            'lat': NEW_DELHI_LAT,
-            'lng': NEW_DELHI_LNG,
+            'lat': rem_lat,
+            'lng': rem_lng,
             'device_id': fake.uuid4(),
-            'is_fraud': 1
+            'is_fraud': 1,
+            'city': rem_city
         })
 
     # Create DataFrame
