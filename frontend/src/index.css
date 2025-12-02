@@ -48,6 +48,7 @@ body {
   text-transform: uppercase;
   background: -webkit-linear-gradient(#38bdf8, #2563eb);
   -webkit-background-clip: text;
+  background-clip: text;
   -webkit-text-fill-color: transparent;
 }
 

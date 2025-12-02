@@ -42,8 +42,6 @@ const Dashboard = () => {
             console.log('New Alert:', data);
             setAlerts((prev) => [data, ...prev]); // Add new alert to top
             // Play sound effect (optional)
-            // const audio = new Audio('https://actions.google.com/sounds/v1/alarms/beep_short.ogg');
-            // audio.play().catch(e => console.log("Audio play failed", e));
         });
 
         // Fetch initial hotspots
@@ -62,8 +60,8 @@ const Dashboard = () => {
 
     const startSimulation = () => {
         axios.post('http://localhost:8000/sim/start')
-            .then(res => alert(res.data.message))
-            .catch(err => alert("Error starting simulation"));
+            .then(res => console.log(res.data.message))
+            .catch(() => console.error("Error starting simulation"));
     };
 
     return (
