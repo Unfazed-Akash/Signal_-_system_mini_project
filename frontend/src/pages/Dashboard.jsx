@@ -42,8 +42,8 @@ const Dashboard = () => {
             console.log('New Alert:', data);
             setAlerts((prev) => [data, ...prev]); // Add new alert to top
             // Play sound effect (optional)
-            const audio = new Audio('https://actions.google.com/sounds/v1/alarms/beep_short.ogg');
-            audio.play().catch(e => console.log("Audio play failed", e));
+            // const audio = new Audio('https://actions.google.com/sounds/v1/alarms/beep_short.ogg');
+            // audio.play().catch(e => console.log("Audio play failed", e));
         });
 
         // Fetch initial hotspots
@@ -78,7 +78,7 @@ const Dashboard = () => {
                         </span>
                     </div>
                     <button onClick={startSimulation} className="sim-btn">
-                        Start Simulation (God Mode)
+                        Start Simulation
                     </button>
                 </div>
 
