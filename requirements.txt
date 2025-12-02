@@ -1,9 +1,0 @@
-fastapi
-uvicorn
-python-socketio
-networkx
-pandas
-scikit-learn
-numpy
-faker
-joblib
