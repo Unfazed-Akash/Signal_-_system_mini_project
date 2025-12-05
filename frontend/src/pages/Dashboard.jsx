@@ -1,166 +1,174 @@
-import React, { useEffect, useState } from 'react';
-import { MapContainer, TileLayer, CircleMarker, Popup } from 'react-leaflet';
+import React, { useState, useEffect, useRef } from 'react';
+import { MapContainer, TileLayer, CircleMarker, Popup, Marker, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
-import socket from '../utils/socket';
-import axios from 'axios';
+import io from 'socket.io-client';
+import L from 'leaflet';
 import AstraPanel from '../components/AstraPanel';
 
-// Fix Leaflet icon issue
-import L from 'leaflet';
-import icon from 'leaflet/dist/images/marker-icon.png';
-import iconShadow from 'leaflet/dist/images/marker-shadow.png';
-
-let DefaultIcon = L.icon({
-    iconUrl: icon,
-    shadowUrl: iconShadow,
-    iconSize: [25, 41],
-    iconAnchor: [12, 41]
+// Fix Leaflet icons
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+    iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
+    iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
+    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
 
-L.Marker.prototype.options.icon = DefaultIcon;
+const socket = io('http://localhost:8000');
 
 const Dashboard = () => {
+    const [transactions, setTransactions] = useState([]);
     const [alerts, setAlerts] = useState([]);
-    const [hotspots, setHotspots] = useState([]);
-    const [isConnected, setIsConnected] = useState(socket.connected);
+    const [atms, setAtms] = useState([]);
     const [selectedAlert, setSelectedAlert] = useState(null);
+    const [simulating, setSimulating] = useState(false);
+    const [stats, setStats] = useState({ fraudCount: 0, protected: 0 });
 
     useEffect(() => {
-        // Connect to socket
-        socket.on('connect', () => {
-            console.log('Connected to WebSocket');
-            setIsConnected(true);
+        // Fetch static ATM data
+        fetch('http://localhost:8000/api/atms')
+            .then(res => res.json())
+            .then(data => setAtms(data))
+            .catch(err => console.error("Failed to load ATMs", err));
+
+        // Socket listeners
+        socket.on('connect', () => console.log("Connected to KAVACH Brain"));
+
+        socket.on('new_transaction', (txn) => {
+            setTransactions(prev => [...prev.slice(-50), txn]); // Keep last 50
         });
 
-        socket.on('disconnect', () => {
-            console.log('Disconnected from WebSocket');
-            setIsConnected(false);
+        socket.on('new_alert', (alert) => {
+            setAlerts(prev => [...prev.slice(-10), alert]);
+            setStats(prev => ({ ...prev, fraudCount: prev.fraudCount + 1 }));
         });
 
-        // Listen for alerts
-        socket.on('new_alert', (data) => {
-            console.log('New Alert:', data);
-            setAlerts((prev) => [data, ...prev]); // Add new alert to top
-            // Play sound effect (optional)
+        socket.on('sim_status', (status) => {
+            setSimulating(status.running);
         });
 
-        // Fetch initial hotspots
-        axios.get('http://localhost:8000/hotspots')
-            .then(res => {
-                setHotspots(res.data);
-            })
-            .catch(err => console.error("Error fetching hotspots:", err));
-
-        return () => {
-            socket.off('connect');
-            socket.off('disconnect');
-            socket.off('new_alert');
-        };
+        return () => socket.off();
     }, []);
 
-    const startSimulation = () => {
-        axios.post('http://localhost:8000/sim/start')
-            .then(res => console.log(res.data.message))
-            .catch(() => console.error("Error starting simulation"));
+    const toggleSimulation = () => {
+        if (simulating) {
+            socket.emit('stop_simulation');
+        } else {
+            socket.emit('start_simulation');
+        }
     };
 
     return (
         <div className="dashboard-container">
-            {/* Sidebar */}
-            <div className="sidebar">
-                <div className="sidebar-header">
-                    <h2>KAVACH TITANIUM</h2>
-                    <div className="status">
-                        Status: <span style={{ color: isConnected ? '#0f0' : '#f00' }}>
-                            {isConnected ? 'LIVE' : 'OFFLINE'}
-                        </span>
+            {/* Header */}
+            <div className="header">
+                <h1>🛡️ KAVACH <span className="highlight">TITANIUM</span></h1>
+                <div className="stats-bar">
+                    <div className="stat-item">
+                        <span className="label">Protected ATMs</span>
+                        <span className="value">{atms.length}</span>
                     </div>
-                    <button onClick={startSimulation} className="sim-btn">
-                        Start Simulation
+                    <div className="stat-item danger">
+                        <span className="label">Threats Detected</span>
+                        <span className="value">{stats.fraudCount}</span>
+                    </div>
+                    <button
+                        className={`sim-btn ${simulating ? 'active' : ''}`}
+                        onClick={toggleSimulation}
+                    >
+                        {simulating ? '⏹ Stop Simulation' : '🎮 Start Simulation (God Mode)'}
                     </button>
-                </div>
-
-                <div className="alerts-list">
-                    <h3>Recent Alerts ({alerts.length})</h3>
-                    {alerts.length === 0 && <p className="no-alerts">No alerts yet...</p>}
-                    {alerts.map((alert, index) => (
-                        <div key={index} className="alert-card">
-                            <div className="alert-header">
-                                <span className="alert-id">TXN: {alert.txn_id.substring(0, 8)}...</span>
-                                <span className="alert-score">Risk: {(alert.risk_score * 100).toFixed(0)}%</span>
-                            </div>
-                            <div className="alert-details">
-                                <p>Graph Risk: {alert.factors.graph_risk}</p>
-                                <p>AI Risk: {alert.factors.ai_risk.toFixed(2)}</p>
-                            </div>
-                        </div>
-                    ))}
                 </div>
             </div>
 
-            {/* Map */}
-            <div className="map-container">
-                <MapContainer
-                    center={[22.5937, 78.9629]} // Center of India
-                    zoom={5}
-                    minZoom={4}
-                    maxBounds={[
-                        [-10, 30], // South West (Indian Ocean/Africa)
-                        [50, 130]  // North East (China/Japan)
-                    ]}
-                    maxBoundsViscosity={1.0}
-                    style={{ height: '100%', width: '100%', background: '#1a1a1a' }}
-                >
-                    {/* CartoDB Dark Matter Tiles */}
-                    <TileLayer
-                        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
-                        url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-                        noWrap={true}
-                    />
+            {/* Main Content */}
+            <div className="content-grid">
+                <div className="map-view">
+                    <MapContainer center={[22.5937, 78.9629]} zoom={5} style={{ height: "100%", width: "100%" }}>
+                        <TileLayer
+                            url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+                            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+                        />
 
-                    {/* Render Hotspots (Static/Historical) */}
-                    {hotspots.map((h, i) => (
-                        <CircleMarker
-                            key={`hotspot-${i}`}
-                            center={[h.lat, h.lng]}
-                            radius={5}
-                            pathOptions={{ color: 'orange', fillColor: 'orange', fillOpacity: 0.5, weight: 0 }}
-                        >
-                            <Popup>Historical Hotspot</Popup>
-                        </CircleMarker>
-                    ))}
-
-                    {/* Render Live Alerts */}
-                    {alerts.map((alert, i) => (
-                        alert.lat && alert.lng && (
+                        {/* ATMs - White markers */}
+                        {atms.map(atm => (
                             <CircleMarker
-                                key={`alert-${i}`}
-                                center={[alert.lat, alert.lng]}
-                                radius={10}
-                                pathOptions={{ color: 'red', fillColor: 'red', fillOpacity: 0.8 }}
-                                eventHandlers={{
-                                    click: () => setSelectedAlert(alert),
+                                key={atm.id}
+                                center={[atm.lat, atm.lng]}
+                                radius={4}
+                                pathOptions={{ color: '#4a90e2', fillColor: '#4a90e2', fillOpacity: 0.8 }}
+                            >
+                                <Popup>{atm.location} ({atm.id})</Popup>
+                            </CircleMarker>
+                        ))}
+
+                        {/* Transactions - Green (Normal) / Red (Fraud) */}
+                        {transactions.map((txn, i) => (
+                            <CircleMarker
+                                key={i}
+                                center={[txn.lat, txn.lng]}
+                                radius={txn.is_fraud ? 8 : 3}
+                                pathOptions={{
+                                    color: txn.is_fraud ? '#ff4444' : '#00C851',
+                                    fillColor: txn.is_fraud ? '#ff4444' : '#00C851',
+                                    fillOpacity: 0.6
                                 }}
                             >
                                 <Popup>
-                                    <strong>FRAUD ALERT</strong><br />
-                                    Risk: {(alert.risk_score * 100).toFixed(0)}%<br />
-                                    Txn: {alert.txn_id}
+                                    Amount: ₹{txn.amount.toFixed(2)}<br />
+                                    Prob: {txn.fraud_probability}
                                 </Popup>
                             </CircleMarker>
-                        )
-                    ))}
-                </MapContainer>
+                        ))}
 
-                {/* Astra Panel Overlay */}
-                {selectedAlert && (
-                    <div className="astra-overlay">
+                        {/* Predictions - Yellow Pulsing Circles */}
+                        {alerts.map(alert =>
+                            alert.predicted_atms.map((pred, idx) => (
+                                <CircleMarker
+                                    key={`pred-${alert.id}-${idx}`}
+                                    center={[pred.lat, pred.lng]}
+                                    radius={15}
+                                    pathOptions={{ color: '#ffbb33', fillColor: 'transparent', dashArray: '5, 5' }}
+                                    className="pulsing-marker" // We'll add this class in CSS
+                                    eventHandlers={{
+                                        click: () => setSelectedAlert(alert)
+                                    }}
+                                >
+                                    <Popup>
+                                        <strong>⚠️ PREDICTED WITHDRAWAL</strong><br />
+                                        Location: {pred.location}<br />
+                                        Prob: {(pred.probability * 100).toFixed(0)}%
+                                    </Popup>
+                                </CircleMarker>
+                            ))
+                        )}
+                    </MapContainer>
+                </div>
+
+                {/* Right Panel - Astra / Feed */}
+                <div className="side-panel">
+                    {selectedAlert ? (
                         <AstraPanel
-                            transaction={selectedAlert}
+                            alert={selectedAlert}
                             onClose={() => setSelectedAlert(null)}
                         />
-                    </div>
-                )}
+                    ) : (
+                        <div className="feed">
+                            <h3>Live Intelligence Feed</h3>
+                            {alerts.length === 0 ? <p className="empty-state">System Secure. Waiting for signals...</p> :
+                                alerts.slice().reverse().map(alert => (
+                                    <div key={alert.id} className="feed-item" onClick={() => setSelectedAlert(alert)}>
+                                        <div className="feed-header">
+                                            <span className="badge high">CRITICAL</span>
+                                            <span className="time">{new Date(alert.timestamp).toLocaleTimeString()}</span>
+                                        </div>
+                                        <p>Fraud detected in <strong>{alert.transaction.city}</strong></p>
+                                        <p className="pred-count">{alert.predicted_atms.length} withdrawal targets projected</p>
+                                    </div>
+                                ))
+                            }
+                        </div>
+                    )}
+                </div>
             </div>
         </div>
     );

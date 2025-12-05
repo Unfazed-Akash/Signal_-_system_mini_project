@@ -1,201 +1,183 @@
 import pandas as pd
 import numpy as np
-from faker import Faker
 import random
+import uuid
 from datetime import datetime, timedelta
 import os
+from data.atm_locations import ATM_LOCATIONS
 
-# Initialize Faker
-fake = Faker('en_IN')
+# Configuration
+TOTAL_ROWS = 60000
+NORMAL_TXNS = 40000
+MULE_TXNS = 5000  # Fan-out
+CIRCULAR_TXNS = 5000
+# Remainder or adjustment to fit total
 
-# Constants
-TOTAL_ROWS = 50000
-NORMAL_ROWS = 45000
-MULE_ROWS = 4000
-CIRCULAR_ROWS = 1000
+DATA_DIR = 'backend/data'
+os.makedirs(DATA_DIR, exist_ok=True)
+OUTPUT_FILE = os.path.join(DATA_DIR, 'historical_data.csv')
 
-# City Configuration
+# Cities and Centers (approx lat/lng)
 CITIES = {
-    'Delhi': {'lat': 28.6139, 'lng': 77.2090, 'radius': 40},
-    'Mumbai': {'lat': 19.0760, 'lng': 72.8777, 'radius': 35},
-    'Bengaluru': {'lat': 12.9716, 'lng': 77.5946, 'radius': 30},
-    'Chennai': {'lat': 13.0827, 'lng': 80.2707, 'radius': 30},
-    'Kolkata': {'lat': 22.5726, 'lng': 88.3639, 'radius': 30},
-    'Lucknow': {'lat': 26.8467, 'lng': 80.9462, 'radius': 20},
-    'Indore': {'lat': 22.7196, 'lng': 75.8577, 'radius': 15}
+    "Delhi": (28.6139, 77.2090),
+    "Mumbai": (19.0760, 72.8777),
+    "Bengaluru": (12.9716, 77.5946),
+    "Chennai": (13.0827, 80.2707),
+    "Kolkata": (22.5726, 88.3639),
+    "Lucknow": (26.8467, 80.9462),
+    "Indore": (22.7196, 75.8577)
 }
 
-# Helper function to generate random lat/lng within radius using Gaussian distribution
-def generate_location(city_name):
-    city = CITIES.get(city_name)
-    if not city:
-        # Default to Delhi if not found
-        city = CITIES['Delhi']
-        
-    center_lat = city['lat']
-    center_lng = city['lng']
-    radius_km = city['radius']
+def generate_random_location(city_center, radius_km=10):
+    # Convert km to degrees (rough approx)
+    # 1 deg lat ~ 111 km
+    r = radius_km / 111.0
+    u = random.random()
+    v = random.random()
+    w = r * np.sqrt(u)
+    t = 2 * np.pi * v
+    x = w * np.cos(t)
+    y = w * np.sin(t)
     
-    # 1 degree lat ~= 111 km
-    # 1 degree lng ~= 111 km * cos(lat)
+    lat = city_center[0] + x
+    lng = city_center[1] + y
+    return lat, lng
+
+def get_closest_atm(lat, lng, city=None):
+    # Filter ATMs by city if provided, else all
+    candidates = [atm for atm in ATM_LOCATIONS if city is None or atm['city'] == city]
+    if not candidates:
+        candidates = ATM_LOCATIONS
     
-    # Use Gaussian distribution for clustering around the center
-    # sigma = radius / 3 ensures ~99% of points are within radius
-    sigma_km = radius_km / 3
+    # Simple Euclidean distance for speed (valid for small distances)
+    best_atm = None
+    min_dist = float('inf')
     
-    lat_offset_km = np.random.normal(0, sigma_km)
-    lng_offset_km = np.random.normal(0, sigma_km)
-    
-    new_lat = center_lat + (lat_offset_km / 111)
-    new_lng = center_lng + (lng_offset_km / (111 * np.cos(np.radians(center_lat))))
-    
-    return new_lat, new_lng
+    for atm in candidates:
+        dist = (atm['lat'] - lat)**2 + (atm['lng'] - lng)**2
+        if dist < min_dist:
+            min_dist = dist
+            best_atm = atm
+            
+    return best_atm
 
 def generate_data():
-    print("Starting data generation...")
+    print(f"Starting enhanced data generation with withdrawal predictions...")
+    
     data = []
     
-    # --- Scenario A: Normal Behavior (45,000 rows) ---
-    print(f"Generating {NORMAL_ROWS} normal transactions...")
-    city_names = list(CITIES.keys())
+    # helper for dates
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=30)
     
-    for _ in range(NORMAL_ROWS):
-        # Pick a random city for this transaction
-        city = random.choice(city_names)
-        lat, lng = generate_location(city)
+    # 1. Normal Transactions
+    print(f"Generating {NORMAL_TXNS} normal transactions...")
+    for _ in range(NORMAL_TXNS):
+        city_name = random.choice(list(CITIES.keys()))
+        lat, lng = generate_random_location(CITIES[city_name])
         
-        data.append({
-            'txn_id': fake.uuid4(),
-            'sender_id': fake.uuid4(),
-            'receiver_id': fake.uuid4(),
-            'amount': round(random.uniform(50, 5000), 2),
-            'timestamp': fake.date_time_between(start_date='-30d', end_date='now'),
+        txn = {
+            'txn_id': str(uuid.uuid4()),
+            'sender_id': f"User_{random.randint(1, 5000)}",
+            'receiver_id': f"User_{random.randint(5001, 10000)}",
+            'amount': round(random.uniform(10, 5000), 2),
+            'timestamp': start_date + (end_date - start_date) * random.random(),
             'lat': lat,
             'lng': lng,
-            'device_id': fake.uuid4(),
+            'city': city_name,
             'is_fraud': 0,
-            'city': city
-        })
+            'txn_type': 'payment',
+            'withdrawal_atm_id': None # Normal payments often don't have immediate withdrawals
+        }
+        data.append(txn)
 
-    # --- Scenario B: Mule Fan-Out Attack (4,000 rows) ---
-    # Logic: One sender -> 10 receivers, same time window, same device/location for receivers
-    print(f"Generating {MULE_ROWS} Mule Fan-Out transactions...")
-    mule_batches = MULE_ROWS // 10
+    # 2. Mule Fan-Out (Fraud)
+    # One mule receives huge money then transfers small amounts to many accounts, 
+    # OR One sender sends to many mules who then withdraw.
+    # Pattern: 1 Sender -> N Receivers (Mules) -> Cash Withdrawal at ATM
+    print(f"Generating {MULE_TXNS} Mule Fan-Out transactions with withdrawals...")
     
-    for _ in range(mule_batches):
-        sender_id = fake.uuid4()
-        base_time = fake.date_time_between(start_date='-30d', end_date='now')
+    mule_groups = 500
+    txns_per_group = MULE_TXNS // mule_groups # ~10
+    
+    for i in range(mule_groups):
+        master_fraudster = f"Fraudster_{random.randint(1, 100)}"
+        city_name = random.choice(list(CITIES.keys()))
         
-        # The "Tell": Same device and location for all receivers (or very close)
-        fraud_device_id = fake.uuid4()
+        # Burst time
+        burst_time = start_date + (end_date - start_date) * random.random()
         
-        # Pick a random city for this fraud batch
-        fraud_city = random.choice(city_names)
-        fraud_lat, fraud_lng = generate_location(fraud_city)
-        
-        for _ in range(10):
-            data.append({
-                'txn_id': fake.uuid4(),
-                'sender_id': sender_id,
-                'receiver_id': fake.uuid4(),
-                'amount': 49999.00, # Exact amount
-                'timestamp': base_time + timedelta(seconds=random.randint(0, 120)), # Within 2 mins
-                'lat': fraud_lat,
-                'lng': fraud_lng,
-                'device_id': fraud_device_id,
+        for j in range(txns_per_group):
+            # Locations often clustered or slightly scattered
+            lat, lng = generate_random_location(CITIES[city_name], radius_km=5)
+            
+            # Prediction: Mules withdraw at closest ATM
+            closest_atm = get_closest_atm(lat, lng, city_name)
+            
+            txn = {
+                'txn_id': str(uuid.uuid4()),
+                'sender_id': master_fraudster,
+                'receiver_id': f"Mule_{random.randint(1, 1000)}",
+                'amount': round(random.uniform(10000, 50000), 2),
+                'timestamp': burst_time + timedelta(seconds=random.randint(0, 300)), # rapid succession
+                'lat': lat,
+                'lng': lng,
+                'city': city_name,
                 'is_fraud': 1,
-                'city': fraud_city
-            })
+                'txn_type': 'transfer_to_mule',
+                'withdrawal_atm_id': closest_atm['id'] if closest_atm else None
+            }
+            data.append(txn)
 
-    # --- Scenario C: Circular Trading (1,000 rows) ---
-    # Logic: A -> B -> C -> A
-    print(f"Generating {CIRCULAR_ROWS} Circular Trading transactions...")
+    # 3. Circular Trading (Fraud)
+    # A -> B -> C -> A
+    print(f"Generating {CIRCULAR_TXNS} Circular Trading transactions...")
+    circles = 1000 # 5000 txns / ~3-5 per circle
     
-    cycles = CIRCULAR_ROWS // 3
-    remainder = CIRCULAR_ROWS % 3
-    
-    for _ in range(cycles):
-        user_a = fake.uuid4()
-        user_b = fake.uuid4()
-        user_c = fake.uuid4()
+    for i in range(circles):
+        circle_size = random.randint(3, 5)
+        participants = [f"CircleUser_{random.randint(1, 1000)}" for _ in range(circle_size)]
         
-        cycle_amount = round(random.uniform(100000, 500000), 2)
-        cycle_time = fake.date_time_between(start_date='-30d', end_date='now')
+        base_amount = round(random.uniform(50000, 100000), 2)
+        city_name = random.choice(list(CITIES.keys()))
+        lat, lng = generate_random_location(CITIES[city_name])
         
-        # Pick a random city for this ring
-        ring_city = random.choice(city_names)
-        base_lat, base_lng = generate_location(ring_city)
+        txn_time = start_date + (end_date - start_date) * random.random()
         
-        # A -> B
-        data.append({
-            'txn_id': fake.uuid4(),
-            'sender_id': user_a,
-            'receiver_id': user_b,
-            'amount': cycle_amount,
-            'timestamp': cycle_time,
-            'lat': base_lat + np.random.normal(0, 0.01),
-            'lng': base_lng + np.random.normal(0, 0.01),
-            'device_id': fake.uuid4(),
-            'is_fraud': 1,
-            'city': ring_city
-        })
-        
-        # B -> C
-        data.append({
-            'txn_id': fake.uuid4(),
-            'sender_id': user_b,
-            'receiver_id': user_c,
-            'amount': cycle_amount,
-            'timestamp': cycle_time + timedelta(minutes=random.randint(10, 60)),
-            'lat': base_lat + np.random.normal(0, 0.01),
-            'lng': base_lng + np.random.normal(0, 0.01),
-            'device_id': fake.uuid4(),
-            'is_fraud': 1,
-            'city': ring_city
-        })
-        
-        # C -> A
-        data.append({
-            'txn_id': fake.uuid4(),
-            'sender_id': user_c,
-            'receiver_id': user_a,
-            'amount': cycle_amount,
-            'timestamp': cycle_time + timedelta(minutes=random.randint(70, 120)),
-            'lat': base_lat + np.random.normal(0, 0.01),
-            'lng': base_lng + np.random.normal(0, 0.01),
-            'device_id': fake.uuid4(),
-            'is_fraud': 1,
-            'city': ring_city
-        })
+        for k in range(circle_size):
+            sender = participants[k]
+            receiver = participants[(k + 1) % circle_size]
+            
+            txn = {
+                'txn_id': str(uuid.uuid4()),
+                'sender_id': sender,
+                'receiver_id': receiver,
+                'amount': base_amount * random.uniform(0.95, 1.05), # slightly varying
+                'timestamp': txn_time + timedelta(minutes=random.randint(5, 60)),
+                'lat': lat + random.uniform(-0.01, 0.01),
+                'lng': lng + random.uniform(-0.01, 0.01),
+                'city': city_name,
+                'is_fraud': 1,
+                'txn_type': 'circular',
+                'withdrawal_atm_id': None
+            }
+            data.append(txn)
+            txn_time += timedelta(minutes=random.randint(10, 30))
 
-    # Fill remainder if any (should be 1 row if 1000 total)
-    for _ in range(remainder):
-         rem_city = random.choice(city_names)
-         rem_lat, rem_lng = generate_location(rem_city)
-         data.append({
-            'txn_id': fake.uuid4(),
-            'sender_id': fake.uuid4(),
-            'receiver_id': fake.uuid4(),
-            'amount': 150000.00,
-            'timestamp': fake.date_time_between(start_date='-30d', end_date='now'),
-            'lat': rem_lat,
-            'lng': rem_lng,
-            'device_id': fake.uuid4(),
-            'is_fraud': 1,
-            'city': rem_city
-        })
-
-    # Create DataFrame
+    # Convert to DF
     df = pd.DataFrame(data)
     
-    # Ensure directory exists
-    os.makedirs('backend/data', exist_ok=True)
+    # Ensure sorted by time
+    df = df.sort_values('timestamp')
     
-    # Save to CSV
-    output_path = 'backend/data/historical_data.csv'
-    df.to_csv(output_path, index=False)
+    print(f"\n=== DATA GENERATION COMPLETE ===")
+    print(f"Total rows: {len(df)}")
+    print(f"Transfers: {len(df)}")
+    print(f"Withdrawals predicted: {df['withdrawal_atm_id'].notnull().sum()}")
+    print(f"Fraud transactions: {df['is_fraud'].sum()}")
     
-    print(f"Data Generation Complete: {len(df)} rows.")
+    df.to_csv(OUTPUT_FILE, index=False)
+    print(f"Saved to {OUTPUT_FILE}")
 
 if __name__ == "__main__":
     generate_data()
