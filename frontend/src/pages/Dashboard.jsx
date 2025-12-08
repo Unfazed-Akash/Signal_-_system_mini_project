@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { MapContainer, TileLayer, CircleMarker, Popup, Marker, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, CircleMarker, Popup, Marker, useMap, Polyline } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import io from 'socket.io-client';
 import L from 'leaflet';
@@ -13,7 +13,7 @@ L.Icon.Default.mergeOptions({
     shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
 
-const socket = io('http://localhost:8000');
+const socket = io('http://127.0.0.1:8000');
 
 const Dashboard = () => {
     const [transactions, setTransactions] = useState([]);
@@ -22,16 +22,35 @@ const Dashboard = () => {
     const [selectedAlert, setSelectedAlert] = useState(null);
     const [simulating, setSimulating] = useState(false);
     const [stats, setStats] = useState({ fraudCount: 0, protected: 0 });
+    const [connectionError, setConnectionError] = useState(false);
 
     useEffect(() => {
         // Fetch static ATM data
-        fetch('http://localhost:8000/api/atms')
-            .then(res => res.json())
-            .then(data => setAtms(data))
-            .catch(err => console.error("Failed to load ATMs", err));
+        fetch('http://127.0.0.1:8000/api/atms')
+            .then(res => {
+                if (!res.ok) throw new Error("Backend not reachable");
+                return res.json();
+            })
+            .then(data => {
+                console.log("ATMs loaded:", data.length);
+                setAtms(data);
+                setConnectionError(false);
+            })
+            .catch(err => {
+                console.error("Failed to load ATMs:", err);
+                setConnectionError(true);
+            });
 
         // Socket listeners
-        socket.on('connect', () => console.log("Connected to KAVACH Brain"));
+        socket.on('connect', () => {
+            console.log("Connected to KAVACH Brain");
+            setConnectionError(false);
+        });
+
+        socket.on('connect_error', (err) => {
+            console.error("Socket connection error:", err);
+            setConnectionError(true);
+        });
 
         socket.on('new_transaction', (txn) => {
             setTransactions(prev => [...prev.slice(-50), txn]); // Keep last 50
@@ -50,6 +69,7 @@ const Dashboard = () => {
     }, []);
 
     const toggleSimulation = () => {
+        if (connectionError) return;
         if (simulating) {
             socket.emit('stop_simulation');
         } else {
@@ -62,6 +82,11 @@ const Dashboard = () => {
             {/* Header */}
             <div className="header">
                 <h1>🛡️ KAVACH <span className="highlight">TITANIUM</span></h1>
+                {connectionError && (
+                    <div className="error-banner" style={{ background: '#ff4444', color: 'white', padding: '5px 10px', borderRadius: '4px', marginLeft: '20px', fontSize: '0.9rem' }}>
+                        ⚠️ DISCONNECTED - CHECK BACKEND
+                    </div>
+                )}
                 <div className="stats-bar">
                     <div className="stat-item">
                         <span className="label">Protected ATMs</span>
@@ -120,27 +145,52 @@ const Dashboard = () => {
                             </CircleMarker>
                         ))}
 
-                        {/* Predictions - Yellow Pulsing Circles */}
-                        {alerts.map(alert =>
-                            alert.predicted_atms.map((pred, idx) => (
-                                <CircleMarker
-                                    key={`pred-${alert.id}-${idx}`}
-                                    center={[pred.lat, pred.lng]}
-                                    radius={15}
-                                    pathOptions={{ color: '#ffbb33', fillColor: 'transparent', dashArray: '5, 5' }}
-                                    className="pulsing-marker" // We'll add this class in CSS
-                                    eventHandlers={{
-                                        click: () => setSelectedAlert(alert)
-                                    }}
-                                >
-                                    <Popup>
-                                        <strong>⚠️ PREDICTED WITHDRAWAL</strong><br />
-                                        Location: {pred.location}<br />
-                                        Prob: {(pred.probability * 100).toFixed(0)}%
-                                    </Popup>
-                                </CircleMarker>
-                            ))
-                        )}
+                        {/* Predictions - Yellow Pulsing Circles & Arrows */}
+                        {alerts.map(alert => (
+                            <React.Fragment key={`alert-group-${alert.id}`}>
+                                {/* 1. THE IMPOSSIBLE JUMP (Red Line: Previous -> Current) */}
+                                {alert.transaction.prev_lat && (
+                                    <Polyline
+                                        positions={[
+                                            [alert.transaction.prev_lat, alert.transaction.prev_lng],
+                                            [alert.transaction.lat, alert.transaction.lng]
+                                        ]}
+                                        pathOptions={{ color: '#ff4444', weight: 4, dashArray: '10, 5', opacity: 0.9 }}
+                                    >
+                                        <Popup>🚨 IMPOSSIBLE JUMP VECTOR ({alert.transaction.sender_id})</Popup>
+                                    </Polyline>
+                                )}
+
+                                {/* 2. THE PREDICTION (Yellow Line: Current -> Next) */}
+                                {alert.predicted_atms.map((pred, idx) => (
+                                    <React.Fragment key={`pred-group-${alert.id}-${idx}`}>
+                                        <Polyline
+                                            positions={[
+                                                [alert.transaction.lat, alert.transaction.lng],
+                                                [pred.lat, pred.lng]
+                                            ]}
+                                            pathOptions={{ color: '#ffbb33', weight: 2, dashArray: '5, 10', opacity: 0.8 }}
+                                        />
+
+                                        <CircleMarker
+                                            center={[pred.lat, pred.lng]}
+                                            radius={15}
+                                            pathOptions={{ color: '#ffbb33', fillColor: 'transparent', dashArray: '5, 5' }}
+                                            className="pulsing-marker"
+                                            eventHandlers={{
+                                                click: () => setSelectedAlert(alert)
+                                            }}
+                                        >
+                                            <Popup>
+                                                <strong>⚠️ PREDICTED WITHDRAWAL</strong><br />
+                                                Location: {pred.location}<br />
+                                                Prob: {(pred.probability * 100).toFixed(0)}%
+                                            </Popup>
+                                        </CircleMarker>
+                                    </React.Fragment>
+                                ))}
+                            </React.Fragment>
+                        ))}
                     </MapContainer>
                 </div>
 

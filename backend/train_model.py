@@ -8,8 +8,12 @@ import joblib
 import os
 
 # Constants
-DATA_PATH = 'backend/data/historical_data.csv'
-MODEL_DIR = 'backend/models'
+from pathlib import Path
+
+# Constants
+BASE_DIR = Path(__file__).resolve().parent
+DATA_PATH = BASE_DIR / 'data' / 'historical_data_enriched.csv'
+MODEL_DIR = BASE_DIR / 'models'
 MODEL_PATH = os.path.join(MODEL_DIR, 'fraud_model.pkl')
 COLUMNS_PATH = os.path.join(MODEL_DIR, 'model_columns.pkl')
 

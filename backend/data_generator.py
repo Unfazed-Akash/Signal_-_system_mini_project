@@ -1,183 +1,127 @@
-import pandas as pd
-import numpy as np
 import random
 import uuid
 from datetime import datetime, timedelta
-import os
-from data.atm_locations import ATM_LOCATIONS
+from backend.database import SessionLocal, init_db, ATM, Transaction, Suspect
+from backend.data.atm_locations import ATM_LOCATIONS
+from sqlalchemy.orm import Session
+import math
 
-# Configuration
-TOTAL_ROWS = 60000
-NORMAL_TXNS = 40000
-MULE_TXNS = 5000  # Fan-out
-CIRCULAR_TXNS = 5000
-# Remainder or adjustment to fit total
+# --- LOGIC CONSTANTS ---
+IMPOSSIBLE_TRAVEL_SPEED_KMH = 800 # If > 800 km/h, it's impossible (unless flying, but still suspicious for ATM)
+MAX_DAILY_WITHDRAWAL = 50000
 
-DATA_DIR = 'backend/data'
-os.makedirs(DATA_DIR, exist_ok=True)
-OUTPUT_FILE = os.path.join(DATA_DIR, 'historical_data.csv')
+def haversine(lat1, lon1, lat2, lon2):
+    R = 6371
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+    return R * c
 
-# Cities and Centers (approx lat/lng)
-CITIES = {
-    "Delhi": (28.6139, 77.2090),
-    "Mumbai": (19.0760, 72.8777),
-    "Bengaluru": (12.9716, 77.5946),
-    "Chennai": (13.0827, 80.2707),
-    "Kolkata": (22.5726, 88.3639),
-    "Lucknow": (26.8467, 80.9462),
-    "Indore": (22.7196, 75.8577)
-}
+class DataGenerator:
+    def __init__(self):
+        init_db()
+        self.db = SessionLocal()
+        self.seed_atms()
+        # Cache for velocity checks
+        self.user_last_loc = {} # {user_id: (lat, lng, timestamp)}
 
-def generate_random_location(city_center, radius_km=10):
-    # Convert km to degrees (rough approx)
-    # 1 deg lat ~ 111 km
-    r = radius_km / 111.0
-    u = random.random()
-    v = random.random()
-    w = r * np.sqrt(u)
-    t = 2 * np.pi * v
-    x = w * np.cos(t)
-    y = w * np.sin(t)
-    
-    lat = city_center[0] + x
-    lng = city_center[1] + y
-    return lat, lng
+    def seed_atms(self):
+        if self.db.query(ATM).count() == 0:
+            print("Seeding ATMs...")
+            for atm_data in ATM_LOCATIONS:
+                atm = ATM(**atm_data)
+                self.db.add(atm)
+            self.db.commit()
 
-def get_closest_atm(lat, lng, city=None):
-    # Filter ATMs by city if provided, else all
-    candidates = [atm for atm in ATM_LOCATIONS if city is None or atm['city'] == city]
-    if not candidates:
-        candidates = ATM_LOCATIONS
-    
-    # Simple Euclidean distance for speed (valid for small distances)
-    best_atm = None
-    min_dist = float('inf')
-    
-    for atm in candidates:
-        dist = (atm['lat'] - lat)**2 + (atm['lng'] - lng)**2
-        if dist < min_dist:
-            min_dist = dist
-            best_atm = atm
-            
-    return best_atm
-
-def generate_data():
-    print(f"Starting enhanced data generation with withdrawal predictions...")
-    
-    data = []
-    
-    # helper for dates
-    end_date = datetime.now()
-    start_date = end_date - timedelta(days=30)
-    
-    # 1. Normal Transactions
-    print(f"Generating {NORMAL_TXNS} normal transactions...")
-    for _ in range(NORMAL_TXNS):
-        city_name = random.choice(list(CITIES.keys()))
-        lat, lng = generate_random_location(CITIES[city_name])
+    def generate_smart_transaction(self):
+        """
+        Generates a transaction with "Crystal Clear" fraud logic injected dynamically.
+        """
+        # 1. Pick a random ATM
+        atm = random.choice(ATM_LOCATIONS)
         
-        txn = {
-            'txn_id': str(uuid.uuid4()),
-            'sender_id': f"User_{random.randint(1, 5000)}",
-            'receiver_id': f"User_{random.randint(5001, 10000)}",
-            'amount': round(random.uniform(10, 5000), 2),
-            'timestamp': start_date + (end_date - start_date) * random.random(),
-            'lat': lat,
-            'lng': lng,
-            'city': city_name,
-            'is_fraud': 0,
-            'txn_type': 'payment',
-            'withdrawal_atm_id': None # Normal payments often don't have immediate withdrawals
+        # 2. Pick a User
+        user_id = f"User_{random.randint(1000, 1020)}" # Small pool to force collisions/relocation
+        
+        # 3. Determine if we want to FORCE a fraud scenario for demo
+        # 40% chance of fraud for visibility
+        is_fraud_scenario = random.random() < 0.4
+        
+        amount = random.choice([500, 1000, 2000, 5000, 10000, 20000])
+        txn_time = datetime.utcnow()
+        fraud_type = None
+        fraud_prob = 0.1
+        
+        # Track previous location for visualization
+        prev_loc = self.user_last_loc.get(user_id)
+        
+        # --- LOGIC: VELOCITY CHECK (Impossible Travel) ---
+        if prev_loc:
+            last_lat, last_lng, last_time = prev_loc
+            distance = haversine(last_lat, last_lng, atm['lat'], atm['lng'])
+            time_diff_hours = (txn_time - last_time).total_seconds() / 3600 + 0.001
+            speed = distance / time_diff_hours
+            
+            if speed > IMPOSSIBLE_TRAVEL_SPEED_KMH:
+                is_fraud_scenario = True
+                fraud_type = "VELOCITY_IMPOSSIBLE_TRAVEL"
+                fraud_prob = 0.99
+                print(f"FRAUD: Impossible Travel. {speed:.0f} km/h")
+        
+        # --- LOGIC: ANOMALY (Sudden High Value in New City) ---
+        # Simulating "Home City" logic
+        # Assume User_1000 lives in Delhi. If he transacts in Chennai -> Flag
+        if user_id == "User_1000" and atm['city'] != "Delhi":
+             is_fraud_scenario = True
+             fraud_type = "GEOSPATIAL_ANOMALY"
+             fraud_prob = 0.85
+             amount = 45000 # Max out
+        
+        if is_fraud_scenario and not fraud_type:
+             # Genuine Random Fraud (e.g. Card Cloning pattern)
+             fraud_type = "PATTERN_CLONED_CARD"
+             fraud_prob = 0.92
+
+        # Update Last Location
+        self.user_last_loc[user_id] = (atm['lat'], atm['lng'], txn_time)
+        
+        # Create Transaction Object
+        txn = Transaction(
+            txn_id=str(uuid.uuid4()),
+            atm_id=atm['id'],
+            sender_id=user_id,
+            amount=amount,
+            timestamp=txn_time,
+            lat=atm['lat'],
+            lng=atm['lng'],
+            city=atm['city'],
+            is_fraud=is_fraud_scenario,
+            fraud_probability=fraud_prob,
+            fraud_type=fraud_type,
+            status="DECLINED_FRAUD" if fraud_prob > 0.9 else "SUCCESS"
+        )
+        
+        # Commit to DB
+        self.db.add(txn)
+        self.db.commit()
+        
+        # Convert to dict for SocketIO
+        return {
+            "txn_id": txn.txn_id,
+            "amount": txn.amount,
+            "lat": txn.lat,
+            "lng": txn.lng,
+            "prev_lat": prev_loc[0] if prev_loc else None, # For Jump Vector
+            "prev_lng": prev_loc[1] if prev_loc else None,
+            "location": atm['location'],
+            "city": txn.city,
+            "sender_id": txn.sender_id,
+            "is_fraud": txn.is_fraud,
+            "fraud_probability": txn.fraud_probability,
+            "fraud_type": txn.fraud_type,
+            "timestamp": txn.timestamp.isoformat(),
+            "status": txn.status
         }
-        data.append(txn)
 
-    # 2. Mule Fan-Out (Fraud)
-    # One mule receives huge money then transfers small amounts to many accounts, 
-    # OR One sender sends to many mules who then withdraw.
-    # Pattern: 1 Sender -> N Receivers (Mules) -> Cash Withdrawal at ATM
-    print(f"Generating {MULE_TXNS} Mule Fan-Out transactions with withdrawals...")
-    
-    mule_groups = 500
-    txns_per_group = MULE_TXNS // mule_groups # ~10
-    
-    for i in range(mule_groups):
-        master_fraudster = f"Fraudster_{random.randint(1, 100)}"
-        city_name = random.choice(list(CITIES.keys()))
-        
-        # Burst time
-        burst_time = start_date + (end_date - start_date) * random.random()
-        
-        for j in range(txns_per_group):
-            # Locations often clustered or slightly scattered
-            lat, lng = generate_random_location(CITIES[city_name], radius_km=5)
-            
-            # Prediction: Mules withdraw at closest ATM
-            closest_atm = get_closest_atm(lat, lng, city_name)
-            
-            txn = {
-                'txn_id': str(uuid.uuid4()),
-                'sender_id': master_fraudster,
-                'receiver_id': f"Mule_{random.randint(1, 1000)}",
-                'amount': round(random.uniform(10000, 50000), 2),
-                'timestamp': burst_time + timedelta(seconds=random.randint(0, 300)), # rapid succession
-                'lat': lat,
-                'lng': lng,
-                'city': city_name,
-                'is_fraud': 1,
-                'txn_type': 'transfer_to_mule',
-                'withdrawal_atm_id': closest_atm['id'] if closest_atm else None
-            }
-            data.append(txn)
-
-    # 3. Circular Trading (Fraud)
-    # A -> B -> C -> A
-    print(f"Generating {CIRCULAR_TXNS} Circular Trading transactions...")
-    circles = 1000 # 5000 txns / ~3-5 per circle
-    
-    for i in range(circles):
-        circle_size = random.randint(3, 5)
-        participants = [f"CircleUser_{random.randint(1, 1000)}" for _ in range(circle_size)]
-        
-        base_amount = round(random.uniform(50000, 100000), 2)
-        city_name = random.choice(list(CITIES.keys()))
-        lat, lng = generate_random_location(CITIES[city_name])
-        
-        txn_time = start_date + (end_date - start_date) * random.random()
-        
-        for k in range(circle_size):
-            sender = participants[k]
-            receiver = participants[(k + 1) % circle_size]
-            
-            txn = {
-                'txn_id': str(uuid.uuid4()),
-                'sender_id': sender,
-                'receiver_id': receiver,
-                'amount': base_amount * random.uniform(0.95, 1.05), # slightly varying
-                'timestamp': txn_time + timedelta(minutes=random.randint(5, 60)),
-                'lat': lat + random.uniform(-0.01, 0.01),
-                'lng': lng + random.uniform(-0.01, 0.01),
-                'city': city_name,
-                'is_fraud': 1,
-                'txn_type': 'circular',
-                'withdrawal_atm_id': None
-            }
-            data.append(txn)
-            txn_time += timedelta(minutes=random.randint(10, 30))
-
-    # Convert to DF
-    df = pd.DataFrame(data)
-    
-    # Ensure sorted by time
-    df = df.sort_values('timestamp')
-    
-    print(f"\n=== DATA GENERATION COMPLETE ===")
-    print(f"Total rows: {len(df)}")
-    print(f"Transfers: {len(df)}")
-    print(f"Withdrawals predicted: {df['withdrawal_atm_id'].notnull().sum()}")
-    print(f"Fraud transactions: {df['is_fraud'].sum()}")
-    
-    df.to_csv(OUTPUT_FILE, index=False)
-    print(f"Saved to {OUTPUT_FILE}")
-
-if __name__ == "__main__":
-    generate_data()
+generator = DataGenerator()

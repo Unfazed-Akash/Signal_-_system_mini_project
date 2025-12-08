@@ -4,11 +4,9 @@
   color-scheme: dark;
   color: #e2e8f0;
   background-color: #0b1120;
-  /* Darker Slate */
 }
 
-body,
-html {
+body, html {
   margin: 0;
   padding: 0;
   width: 100%;
@@ -17,7 +15,6 @@ html {
 }
 
 /* --- Layout --- */
-
 .dashboard-container {
   display: flex;
   flex-direction: column;
@@ -27,13 +24,13 @@ html {
 
 .header {
   height: 60px;
-  background: #0f172a;
-  border-bottom: 1px solid #1e293b;
+  background: rgba(15, 23, 42, 0.8);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(255,255,255,0.1);
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 20px;
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
   z-index: 500;
 }
 
@@ -67,7 +64,7 @@ html {
 .stat-item .label {
   font-size: 0.7rem;
   text-transform: uppercase;
-  color: #64748b;
+  color: #94a3b8;
   font-weight: 700;
 }
 
@@ -75,11 +72,6 @@ html {
   font-size: 1.1rem;
   font-weight: 700;
   color: #f8fafc;
-}
-
-.stat-item.danger .value {
-  color: #ef4444;
-  text-shadow: 0 0 10px rgba(239, 68, 68, 0.4);
 }
 
 .sim-btn {
@@ -94,6 +86,11 @@ html {
   text-transform: uppercase;
   font-size: 0.8rem;
   letter-spacing: 0.5px;
+}
+
+.sim-btn:hover {
+  background: #1d4ed8;
+  box-shadow: 0 0 15px rgba(37, 99, 235, 0.5);
 }
 
 .sim-btn.active {
@@ -140,18 +137,19 @@ html {
 }
 
 .feed-item {
-  background: #1e293b;
-  border: 1px solid #334155;
+  background: rgba(30, 41, 59, 0.7);
+  border: 1px solid rgba(255,255,255,0.05);
   border-radius: 6px;
   padding: 15px;
   margin-bottom: 15px;
   cursor: pointer;
-  transition: transform 0.2s, background 0.2s;
+  transition: all 0.2s;
 }
 
 .feed-item:hover {
   transform: translateX(-5px);
   background: #334155;
+  border-color: #38bdf8;
 }
 
 .feed-header {
@@ -165,7 +163,7 @@ html {
   color: #ef4444;
   padding: 2px 6px;
   border-radius: 4px;
-  font-size: 0.7rem;
+  fontSize: 0.7rem;
   font-weight: 700;
   border: 1px solid rgba(239, 68, 68, 0.4);
 }
@@ -181,219 +179,42 @@ html {
   margin-top: 5px;
 }
 
-.empty-state {
-  text-align: center;
-  color: #475569;
-  font-style: italic;
-  margin-top: 40px;
+/* --- Animations --- */
+@keyframes pulse-ring {
+  0% { transform: scale(0.33); opacity: 0.8; }
+  80%, 100% { opacity: 0; }
 }
 
-/* --- Astra Panel --- */
-.astra-panel {
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  background: #0b1120;
+@keyframes pulse-dot {
+  0% { transform: scale(0.8); }
+  50% { transform: scale(1); }
+  100% { transform: scale(0.8); }
 }
 
-.astra-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
-  border-bottom: 1px solid #334155;
-  padding-bottom: 15px;
+.pulsing-marker {
+  animation: pulse-dot 1.5s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
 }
 
-.astra-header h2 {
-  margin: 0;
-  font-size: 1.1rem;
-  color: #38bdf8;
-  letter-spacing: 1px;
+/* Glassmorphism Utilities */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 4px 6px rgba(0,0,0,0.1);
 }
 
-.close-btn {
-  background: none;
-  border: none;
-  color: #64748b;
-  font-size: 1.5rem;
-  cursor: pointer;
+@keyframes highlight {
+    0% { background: #fffacd; }
+    100% { background: transparent; }
 }
 
-.astra-body {
-  flex: 1;
-  overflow-y: auto;
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
 }
 
-.section {
-  margin-bottom: 25px;
-}
-
-.level-bar {
-  height: 8px;
-  background: #334155;
-  border-radius: 4px;
-  overflow: hidden;
-  margin-top: 8px;
-}
-
-.level-bar .fill.critical {
-  background: #ef4444;
-  height: 100%;
-  text-align: right;
-  font-size: 0.6rem;
-  line-height: 8px;
-  padding-right: 5px;
-  color: #000;
-  font-weight: bold;
-}
-
-.row {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 10px;
-  font-size: 0.9rem;
-  border-bottom: 1px solid #1e293b;
-  padding-bottom: 5px;
-}
-
-.code {
-  font-family: 'Courier New', monospace;
-  color: #fff;
-}
-
-.warning {
-  color: #fbbf24;
-  font-weight: 700;
-}
-
-.predictions h3 {
-  font-size: 0.8rem;
-  color: #94a3b8;
-  margin-bottom: 10px;
-}
-
-.prediction-item {
-  background: #1e293b;
-  border-left: 3px solid #fbbf24;
-  padding: 10px;
-  margin-bottom: 10px;
-}
-
-.p-header {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 5px;
-}
-
-.rank {
-  font-weight: 700;
-  color: #fbbf24;
-}
-
-.p-prob {
-  font-size: 0.8rem;
-  color: #fff;
-}
-
-.p-loc {
-  font-size: 0.9rem;
-  font-weight: 600;
-  margin-bottom: 5px;
-}
-
-.p-meta {
-  display: flex;
-  justify-content: space-between;
-  font-size: 0.75rem;
-  color: #64748b;
-}
-
-.actions {
-  display: grid;
-  gap: 10px;
-  margin-top: auto;
-}
-
-.action-btn {
-  width: 100%;
-  padding: 12px;
-  border: none;
-  border-radius: 4px;
-  font-weight: 700;
-  cursor: pointer;
-  text-transform: uppercase;
-  font-size: 0.85rem;
-}
-
-.action-btn.deploy {
-  background: #38bdf8;
-  color: #0f172a;
-}
-
-.action-btn.freeze {
-  background: rgba(239, 68, 68, 0.1);
-  color: #ef4444;
-  border: 1px solid #ef4444;
-}
-
-.action-btn:hover {
-  opacity: 0.9;
-}
-
-/* --- Map Animations --- */
-
-/* Pulse animation for predictions */
-/* Using SVG stroke animation logic */
-@keyframes dash {
-  from {
-    stroke-dashoffset: 20;
-  }
-
-  to {
-    stroke-dashoffset: 0;
-  }
-}
-
-.pulsing-marker path {
-  /* Leaflet renders markers as SVG paths or div icons. 
-     CircleMarker is SVG. We need to target the path. 
-     However, standard CircleMarker options like dashArray are static.
-     We might need JS to animate, OR use CSS on the class if Leaflet applies it to the path.
-     Leaflet applies className to the <path> element for CircleMarker.
-  */
-  animation: svg-pulse 1.5s infinite alternate;
-  transform-origin: center;
-}
-
-@keyframes svg-pulse {
-  0% {
-    stroke-opacity: 1;
-    stroke-width: 2;
-    fill-opacity: 0;
-    transform: scale(1);
-  }
-
-  100% {
-    stroke-opacity: 0.5;
-    stroke-width: 10;
-    fill-opacity: 0.2;
-    transform: scale(1.1);
-  }
-}
-
-/* Button pulse */
 @keyframes pulse-red {
-  0% {
-    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
-  }
-
-  70% {
-    box-shadow: 0 0 0 10px rgba(239, 68, 68, 0);
-  }
-
-  100% {
-    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
-  }
+  0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+  70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
 }

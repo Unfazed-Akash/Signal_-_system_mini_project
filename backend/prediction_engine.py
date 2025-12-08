@@ -3,11 +3,14 @@ import numpy as np
 import joblib
 import os
 from math import radians, sin, cos, sqrt, atan2
-from data.atm_locations import ATM_LOCATIONS
+from backend.data.atm_locations import ATM_LOCATIONS
+
+from pathlib import Path
 
 # Paths
-MODEL_PATH = 'backend/models/fraud_model.pkl'
-COLUMNS_PATH = 'backend/models/model_columns.pkl'
+BASE_DIR = Path(__file__).resolve().parent.parent
+MODEL_PATH = BASE_DIR / 'backend' / 'models' / 'fraud_model.pkl'
+COLUMNS_PATH = BASE_DIR / 'backend' / 'models' / 'model_columns.pkl'
 
 class PredictionEngine:
     def __init__(self):

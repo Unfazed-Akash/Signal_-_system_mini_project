@@ -2,13 +2,31 @@ import asyncio
 import json
 import random
 import uuid
+import csv
+import os
 from datetime import datetime
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import FastAPI, BackgroundTasks, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.orm import Session
 import socketio
 import pandas as pd
-from prediction_engine import engine
-from data.atm_locations import ATM_LOCATIONS
+from pathlib import Path
+
+# New Imports
+from backend.prediction_engine import engine as prediction_engine
+from backend.database import get_db, Transaction, ATM, Suspect, FraudReport
+from backend.data_generator import generator
+
+# File Paths
+BASE_DIR = Path(__file__).resolve().parent.parent
+COMPLAINTS_FILE = BASE_DIR / 'backend' / 'data' / 'complaints.csv'
+
+# Ensure data dir exists
+COMPLAINTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+if not COMPLAINTS_FILE.exists():
+    with open(COMPLAINTS_FILE, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(['ticket_id', 'reporter_name', 'category', 'description', 'timestamp'])
 
 # App Setup
 app = FastAPI()
@@ -25,26 +43,80 @@ app.add_middleware(
 
 # Global State
 SIMULATION_RUNNING = False
-DATA_PATH = 'backend/data/historical_data.csv'
 
 # --- API Endpoints ---
 
 @app.get("/")
 def read_root():
-    return {"status": "Kavach 2.0 Backend Running"}
+    return {"status": "Kavach Titanium Brain Running | DB Connected"}
 
 @app.get("/api/atms")
-def get_atms():
-    return ATM_LOCATIONS
+def get_atms(db: Session = Depends(get_db)):
+    # Return from DB now
+    return db.query(ATM).all()
 
-@app.get("/api/stats")
-def get_stats():
+@app.get("/api/stats") # General Dashboard (God Mode)
+def get_stats(db: Session = Depends(get_db)):
+    total_txns = db.query(Transaction).count()
+    fraud_txns = db.query(Transaction).filter(Transaction.is_fraud == True).count()
     return {
         "active_monitoring": True,
-        "cities_covered": 7,
-        "atms_protected": len(ATM_LOCATIONS),
-        "system_status": "OPERATIONAL"
+        "atms_protected": db.query(ATM).count(),
+        "total_transactions": total_txns,
+        "threats_stopped": fraud_txns,
+        "system_status": "TITANIUM_SHIELD_ACTIVE"
     }
+
+# --- PORTAL APIs (New) ---
+
+@app.get("/api/lea/stats") # Police Dashboard
+def get_lea_stats(db: Session = Depends(get_db)):
+    # Calculate interception metrics
+    recent_frauds = db.query(Transaction).filter(Transaction.is_fraud == True).order_by(Transaction.timestamp.desc()).limit(10).all()
+    return {
+        "active_operations": 3,
+        "suspects_tracked": db.query(Suspect).count(),
+        "recent_alerts": recent_frauds
+    }
+
+@app.get("/api/bank/stats") # Bank Dashboard
+def get_bank_stats(db: Session = Depends(get_db)):
+    # Financial metrics
+    frauds = db.query(Transaction).filter(Transaction.is_fraud == True).all()
+    saved = sum([f.amount for f in frauds if f.status == "DECLINED_FRAUD"])
+    return {
+        "total_saved_inr": saved,
+        "blocked_cards": len(frauds),
+        "false_positive_rate": "0.4%"
+    }
+
+@app.post("/api/portal/submit") # User Grievance
+def submit_report(report: dict, db: Session = Depends(get_db)):
+    # Save user query to DB
+    new_report = FraudReport(
+        reporter_name=report.get('name', 'Anonymous'),
+        description=report.get('desc'),
+        fraud_category=report.get('category'),
+        status="OPEN"
+    )
+    db.add(new_report)
+    db.commit()
+    
+    # Save to Live CSV
+    try:
+        with open(COMPLAINTS_FILE, 'a', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                new_report.report_id,
+                new_report.reporter_name,
+                new_report.fraud_category,
+                new_report.description,
+                new_report.timestamp.isoformat()
+            ])
+    except Exception as e:
+        print(f"CSV Logging Error: {e}")
+
+    return {"status": "received", "ticket_id": new_report.report_id}
 
 # --- Socket.IO Events ---
 
@@ -58,7 +130,7 @@ async def start_simulation(sid):
     global SIMULATION_RUNNING
     if not SIMULATION_RUNNING:
         SIMULATION_RUNNING = True
-        print("Starting simulation...")
+        print("Starting SMART simulation...")
         asyncio.create_task(run_simulation())
         await sio.emit('sim_status', {'running': True})
 
@@ -72,71 +144,38 @@ async def stop_simulation(sid):
 # --- Simulation Logic ---
 
 async def run_simulation():
-    """
-    Continuous loop that generates transactions and processes them.
-    In a real system, this would ingest from a message queue (Kafka).
-    """
-    print("Simulation loop started.")
+    print("Simulation loop started (DB Mode).")
     
-    # Load some historical data to replay or sample from
-    try:
-        df_history = pd.read_csv(DATA_PATH)
-        sample_pool = df_history.to_dict('records')
-    except:
-        print("No historical data found, generating synthetic on the fly.")
-        sample_pool = []
-
     while SIMULATION_RUNNING:
-        # Create a transaction (Hybrid: Replay or Random)
-        if sample_pool and random.random() < 0.7:
-            base_txn = random.choice(sample_pool)
-            # Jitter
-            txn = base_txn.copy()
-            txn['txn_id'] = str(uuid.uuid4())
-            txn['timestamp'] = datetime.now().isoformat()
-            txn['amount'] = float(txn['amount']) * random.uniform(0.9, 1.1)
-        else:
-            # Generate fresh
-            city_idx = random.randint(0, len(ATM_LOCATIONS)-1)
-            city_center = ATM_LOCATIONS[city_idx] # Just use ATM loc as anchor
-            txn = {
-                'txn_id': str(uuid.uuid4()),
-                'amount': random.uniform(100, 50000),
-                'lat': city_center['lat'] + random.uniform(-0.05, 0.05),
-                'lng': city_center['lng'] + random.uniform(-0.05, 0.05),
-                'city': city_center['city'],
-                'timestamp': datetime.now().isoformat(),
-                'sender_id': f"User_{random.randint(1000,9999)}"
-            }
-
-        # Predict Fraud
-        fraud_prob = engine.predict_fraud(txn)
-        is_fraud = fraud_prob > 0.7
-        
-        # Enrich txn for frontend
-        txn['fraud_probability'] = round(fraud_prob, 2)
-        txn['is_fraud'] = is_fraud
-        
-        # Emit Transaction
-        await sio.emit('new_transaction', txn)
-        
-        # If Fraud => Predict Withdrawal & Emit Alert
-        if is_fraud:
-            predictions = engine.predict_withdrawal_locations(txn)
+        # Use simple try-except to prevent crash loops
+        try:
+            # Generate SMART transaction via Generator
+            txn_dict = generator.generate_smart_transaction()
             
-            alert_data = {
-                'id': str(uuid.uuid4()),
-                'transaction': txn,
-                'predicted_atms': predictions,
-                'timestamp': datetime.now().isoformat(),
-                'severity': 'HIGH' if fraud_prob > 0.9 else 'MEDIUM'
-            }
+            # Emit Transaction
+            await sio.emit('new_transaction', txn_dict)
             
-            print(f"!!! FRAUD DETECTED !!! Predicting withdrawal at: {[p['location'] for p in predictions]}")
-            await sio.emit('new_alert', alert_data)
+            # If Fraud => Predict Withdrawal & Emit Alert
+            if txn_dict['is_fraud']:
+                # Use engine to predict NEXT location
+                predictions = prediction_engine.predict_withdrawal_locations(txn_dict)
+                
+                alert_data = {
+                    'id': str(uuid.uuid4()),
+                    'transaction': txn_dict,
+                    'predicted_atms': predictions,
+                    'timestamp': txn_dict['timestamp'],
+                    'severity': 'HIGH' if txn_dict['fraud_probability'] > 0.9 else 'MEDIUM'
+                }
+                
+                print(f"!!! FRAUD DETECTED !!! Type: {txn_dict['fraud_type']}")
+                await sio.emit('new_alert', alert_data)
+                
+        except Exception as e:
+            print(f"Simulation Error: {e}")
             
         # Sleep to control rate
-        await asyncio.sleep(random.uniform(0.5, 2.0))
+        await asyncio.sleep(random.uniform(0.5, 1.5))
 
 if __name__ == "__main__":
     import uvicorn
