@@ -1,6 +1,8 @@
-import React from 'react';
+import { useNavigate } from 'react-router-dom';
 
 const AstraPanel = ({ alert, onClose }) => {
+    const navigate = useNavigate();
+
     return (
         <div className="astra-panel" style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'rgba(15, 23, 42, 0.95)', borderLeft: '1px solid rgba(255,255,255,0.1)' }}>
             <div className="astra-header" style={{ padding: '20px', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -19,6 +21,28 @@ const AstraPanel = ({ alert, onClose }) => {
             </div>
 
             <div className="astra-body" style={{ flex: 1, padding: '20px', overflowY: 'auto' }}>
+                <div className="actions" style={{ marginBottom: '20px', display: 'grid', gap: '10px' }}>
+                    <button
+                        className="action-btn deploy"
+                        onClick={() => navigate('/lea')}
+                        style={{
+                            width: '100%', padding: '12px', border: 'none', borderRadius: '4px',
+                            background: '#0ea5e9', color: 'white', fontWeight: 'bold', letterSpacing: '0.5px', cursor: 'pointer',
+                            boxShadow: '0 4px 6px -1px rgba(14, 165, 233, 0.4)'
+                        }}>
+                        🚀 DEPLOY UNITS
+                    </button>
+                    <button
+                        className="action-btn freeze"
+                        onClick={() => navigate('/bank')}
+                        style={{
+                            width: '100%', padding: '12px', border: '1px solid #ef4444', borderRadius: '4px',
+                            background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', fontWeight: 'bold', letterSpacing: '0.5px', cursor: 'pointer'
+                        }}>
+                        ❄️ FREEZE ACCOUNTS
+                    </button>
+                </div>
+
                 <div className="section" style={{ marginBottom: '30px' }}>
                     <div className="row" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px', fontSize: '0.9rem' }}>
                         <span style={{ color: '#94a3b8' }}>TRANSACTION ID</span>
@@ -63,21 +87,7 @@ const AstraPanel = ({ alert, onClose }) => {
                 </div>
             </div>
 
-            <div className="actions" style={{ padding: '20px', display: 'grid', gap: '10px', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
-                <button className="action-btn deploy" style={{
-                    width: '100%', padding: '12px', border: 'none', borderRadius: '4px',
-                    background: '#0ea5e9', color: 'white', fontWeight: 'bold', letterSpacing: '0.5px', cursor: 'pointer',
-                    boxShadow: '0 4px 6px -1px rgba(14, 165, 233, 0.4)'
-                }}>
-                    DEPLOY UNITS
-                </button>
-                <button className="action-btn freeze" style={{
-                    width: '100%', padding: '12px', border: '1px solid #ef4444', borderRadius: '4px',
-                    background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', fontWeight: 'bold', letterSpacing: '0.5px', cursor: 'pointer'
-                }}>
-                    FREEZE ACCOUNTS
-                </button>
-            </div>
+
         </div>
     );
 };

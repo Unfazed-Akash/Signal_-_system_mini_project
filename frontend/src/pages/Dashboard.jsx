@@ -13,6 +13,15 @@ L.Icon.Default.mergeOptions({
     shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
 
+// Custom Tactical Icon
+const createTacticalIcon = () => {
+    return L.divIcon({
+        className: 'glow-marker', // Defined in index.css
+        iconSize: [20, 20],
+        iconAnchor: [10, 10] // Center it
+    });
+};
+
 const socket = io('http://127.0.0.1:8000');
 
 const Dashboard = () => {
@@ -32,7 +41,6 @@ const Dashboard = () => {
                 return res.json();
             })
             .then(data => {
-                console.log("ATMs loaded:", data.length);
                 setAtms(data);
                 setConnectionError(false);
             })
@@ -43,12 +51,10 @@ const Dashboard = () => {
 
         // Socket listeners
         socket.on('connect', () => {
-            console.log("Connected to KAVACH Brain");
             setConnectionError(false);
         });
 
         socket.on('connect_error', (err) => {
-            console.error("Socket connection error:", err);
             setConnectionError(true);
         });
 
@@ -108,19 +114,29 @@ const Dashboard = () => {
             {/* Main Content */}
             <div className="content-grid">
                 <div className="map-view">
-                    <MapContainer center={[22.5937, 78.9629]} zoom={5} style={{ height: "100%", width: "100%" }}>
+                    <MapContainer
+                        center={[22.5937, 78.9629]}
+                        zoom={5}
+                        style={{ height: "100%", width: "100%" }}
+                        minZoom={5}
+                        maxZoom={18}
+                        maxBounds={[[5.0, 65.0], [38.0, 98.0]]} // Lock to India
+                        maxBoundsViscosity={1.0} // Sticky bounds
+                    >
+                        {/* Dark Mode Map Provider */}
                         <TileLayer
                             url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-                            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+                            attribution='&copy; <a href="https://carto.com/attributions">CARTO</a>'
+                            noWrap={true} // Stop world repeating
                         />
 
-                        {/* ATMs - White markers */}
+                        {/* ATMs - Subtle White Dots */}
                         {atms.map(atm => (
                             <CircleMarker
                                 key={atm.id}
                                 center={[atm.lat, atm.lng]}
-                                radius={4}
-                                pathOptions={{ color: '#4a90e2', fillColor: '#4a90e2', fillOpacity: 0.8 }}
+                                radius={2}
+                                pathOptions={{ color: '#4a90e2', fillColor: '#4a90e2', fillOpacity: 0.5, opacity: 0.5 }}
                             >
                                 <Popup>{atm.location} ({atm.id})</Popup>
                             </CircleMarker>
@@ -131,66 +147,74 @@ const Dashboard = () => {
                             <CircleMarker
                                 key={i}
                                 center={[txn.lat, txn.lng]}
-                                radius={txn.is_fraud ? 8 : 3}
+                                radius={txn.is_fraud ? 6 : 2}
                                 pathOptions={{
-                                    color: txn.is_fraud ? '#ff4444' : '#00C851',
-                                    fillColor: txn.is_fraud ? '#ff4444' : '#00C851',
-                                    fillOpacity: 0.6
+                                    color: txn.is_fraud ? '#ef4444' : '#10b981',
+                                    fillColor: txn.is_fraud ? '#ef4444' : '#10b981',
+                                    fillOpacity: 0.8,
+                                    weight: 1
                                 }}
                             >
                                 <Popup>
-                                    Amount: ₹{txn.amount.toFixed(2)}<br />
-                                    Prob: {txn.fraud_probability}
+                                    <div style={{ color: 'black' }}>
+                                        <strong>{txn.is_fraud ? "🚨 FRAUD DETECTED" : "✅ Valid Txn"}</strong><br />
+                                        Amount: ₹{txn.amount.toLocaleString()}<br />
+                                        <hr style={{ margin: '5px 0', border: '0.5px solid #ccc' }} />
+                                        Origin: <strong>{txn.user_home_location || "Unknown"}</strong><br />
+                                        Location: <strong>{txn.city}</strong><br />
+                                    </div>
                                 </Popup>
                             </CircleMarker>
                         ))}
 
-                        {/* Predictions - Yellow Pulsing Circles & Arrows */}
-                        {alerts.map(alert => (
-                            <React.Fragment key={`alert-group-${alert.id}`}>
-                                {/* 1. THE IMPOSSIBLE JUMP (Red Line: Previous -> Current) */}
-                                {alert.transaction.prev_lat && (
-                                    <Polyline
-                                        positions={[
-                                            [alert.transaction.prev_lat, alert.transaction.prev_lng],
-                                            [alert.transaction.lat, alert.transaction.lng]
-                                        ]}
-                                        pathOptions={{ color: '#ff4444', weight: 4, dashArray: '10, 5', opacity: 0.9 }}
-                                    >
-                                        <Popup>🚨 IMPOSSIBLE JUMP VECTOR ({alert.transaction.sender_id})</Popup>
-                                    </Polyline>
-                                )}
-
-                                {/* 2. THE PREDICTION (Yellow Line: Current -> Next) */}
-                                {alert.predicted_atms.map((pred, idx) => (
-                                    <React.Fragment key={`pred-group-${alert.id}-${idx}`}>
+                        {/* Predictions - TACTICAL GLOW MARKERS */}
+                        {
+                            alerts.map(alert => (
+                                <React.Fragment key={`alert-group-${alert.id}`}>
+                                    {/* 1. The Line of Attack (Red) */}
+                                    {alert.transaction.prev_lat && (
                                         <Polyline
                                             positions={[
-                                                [alert.transaction.lat, alert.transaction.lng],
-                                                [pred.lat, pred.lng]
+                                                [alert.transaction.prev_lat, alert.transaction.prev_lng],
+                                                [alert.transaction.lat, alert.transaction.lng]
                                             ]}
-                                            pathOptions={{ color: '#ffbb33', weight: 2, dashArray: '5, 10', opacity: 0.8 }}
-                                        />
-
-                                        <CircleMarker
-                                            center={[pred.lat, pred.lng]}
-                                            radius={15}
-                                            pathOptions={{ color: '#ffbb33', fillColor: 'transparent', dashArray: '5, 5' }}
-                                            className="pulsing-marker"
-                                            eventHandlers={{
-                                                click: () => setSelectedAlert(alert)
-                                            }}
+                                            pathOptions={{ color: '#ef4444', weight: 2, dashArray: '5, 5', opacity: 0.6 }}
                                         >
-                                            <Popup>
-                                                <strong>⚠️ PREDICTED WITHDRAWAL</strong><br />
-                                                Location: {pred.location}<br />
-                                                Prob: {(pred.probability * 100).toFixed(0)}%
-                                            </Popup>
-                                        </CircleMarker>
-                                    </React.Fragment>
-                                ))}
-                            </React.Fragment>
-                        ))}
+                                            <Popup>Movement Vector</Popup>
+                                        </Polyline>
+                                    )}
+
+                                    {/* 2. The Predicted Withdrawals (Gold Glow) */}
+                                    {alert.predicted_atms.map((pred, idx) => (
+                                        <React.Fragment key={`pred-group-${alert.id}-${idx}`}>
+                                            {/* Trajectory Line */}
+                                            <Polyline
+                                                positions={[
+                                                    [alert.transaction.lat, alert.transaction.lng],
+                                                    [pred.lat, pred.lng]
+                                                ]}
+                                                pathOptions={{ color: '#fbbf24', weight: 1, dashArray: '2, 4', opacity: 0.6 }}
+                                            />
+
+                                            {/* TACTICAL MARKER - No more moving circle. Just a pulsing glow. */}
+                                            <Marker
+                                                position={[pred.lat, pred.lng]}
+                                                icon={createTacticalIcon()}
+                                                eventHandlers={{
+                                                    click: () => setSelectedAlert(alert)
+                                                }}
+                                            >
+                                                <Popup>
+                                                    <strong>⚠️ PREDICTED TARGET</strong><br />
+                                                    Location: {pred.location}<br />
+                                                    Confidence: {(pred.probability * 100).toFixed(0)}%
+                                                </Popup>
+                                            </Marker>
+                                        </React.Fragment>
+                                    ))}
+                                </React.Fragment>
+                            ))
+                        }
                     </MapContainer>
                 </div>
 
@@ -204,15 +228,15 @@ const Dashboard = () => {
                     ) : (
                         <div className="feed">
                             <h3>Live Intelligence Feed</h3>
-                            {alerts.length === 0 ? <p className="empty-state">System Secure. Waiting for signals...</p> :
+                            {alerts.length === 0 ? <p style={{ padding: '20px', color: 'var(--text-secondary)' }}>System Secure. Monitoring Net-Traffic...</p> :
                                 alerts.slice().reverse().map(alert => (
                                     <div key={alert.id} className="feed-item" onClick={() => setSelectedAlert(alert)}>
                                         <div className="feed-header">
                                             <span className="badge high">CRITICAL</span>
                                             <span className="time">{new Date(alert.timestamp).toLocaleTimeString()}</span>
                                         </div>
-                                        <p>Fraud detected in <strong>{alert.transaction.city}</strong></p>
-                                        <p className="pred-count">{alert.predicted_atms.length} withdrawal targets projected</p>
+                                        <p style={{ margin: '5px 0', fontSize: '0.9rem' }}>Suspicious Activity in <strong style={{ color: 'white' }}>{alert.transaction.city}</strong></p>
+                                        <p className="pred-count">► {alert.predicted_atms.length} locations identified</p>
                                     </div>
                                 ))
                             }

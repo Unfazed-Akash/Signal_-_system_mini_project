@@ -38,6 +38,23 @@ for _ in range(NUM_RECORDS):
         fraud_type = "NONE"
         user_loc = city
         fraudster_loc = city
+    
+    # Enhanced Data Parameters for REALISM
+    # 1. Merchant Category Code (MCC)
+    if is_fraud:
+        # High Risk MCCs: 7995 (Gambling), 6051 (Crypto), 4829 (Wire Transfer)
+        mcc = random.choice([7995, 6051, 4829, 5967])
+        # Fraudsters often use Emulators or Rooted Androids
+        device_id = f"Emulator_{random.randint(1000, 9999)}"
+        # IP Address often proxies (Non-Indian IPs or Datacenter IPs)
+        ip_addr = f"{random.choice([45, 103, 185])}.{random.randint(0,255)}.{random.randint(0,255)}.{random.randint(0,255)}"
+    else:
+        # Normal MCCs: 5411 (Grocery), 5812 (Dining), 5311 (Department Store)
+        mcc = random.choice([5411, 5812, 5311, 4121])
+        # Normal Devices
+        device_id = random.choice(["iPhone13", "SamsungS21", "OnePlus9", "Pixel6"]) + f"_{random.randint(100,999)}"
+        # Normal Home/Mobile IP
+        ip_addr = f"192.168.{random.randint(0,255)}.{random.randint(0,255)}"
     # Map city to coords (Approx)
     coords = {
         "Delhi": (28.7041, 77.1025),
@@ -67,7 +84,12 @@ for _ in range(NUM_RECORDS):
         "active_location": fraudster_loc, # Where txn happened
         "fraud_type": fraud_type,
         "is_fraud": 1 if is_fraud else 0,
-        "bank_response_time_ms": random.randint(50, 400)
+        "is_fraud": 1 if is_fraud else 0,
+        "bank_response_time_ms": random.randint(50, 400),
+        # New Tech Fields for Judges
+        "mcc": mcc,
+        "device_id": device_id,
+        "ip_address": ip_addr
     }
     data.append(row)
 
