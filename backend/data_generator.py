@@ -1,125 +1,135 @@
 import random
 import uuid
-from datetime import datetime, timedelta
-from backend.database import SessionLocal, init_db, ATM, Transaction, Suspect
-from backend.data.atm_locations import ATM_LOCATIONS
-from sqlalchemy.orm import Session
+import json
 import math
+import numpy as np
+from datetime import datetime, timedelta
+from sqlalchemy.orm import Session
+from sqlalchemy import func
 
-# --- LOGIC CONSTANTS ---
-IMPOSSIBLE_TRAVEL_SPEED_KMH = 800 # If > 800 km/h, it's impossible (unless flying, but still suspicious for ATM)
-MAX_DAILY_WITHDRAWAL = 50000
+from backend.database import SessionLocal, init_db, ATM, Transaction, User, Fraudster, Complaint
+from backend.data.atm_locations import ATM_LOCATIONS
 
-def haversine(lat1, lon1, lat2, lon2):
-    R = 6371
-    dlat = math.radians(lat2 - lat1)
-    dlon = math.radians(lon2 - lon1)
-    a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
-    return R * c
+# --- CONSTANTS ---
+MERCHANT_CATEGORIES = ["Retail", "Dining", "Travel", "Electronics", "Groceries", "Utilities", "Entertainment"]
+FRAUD_TYPES = ["VELOCITY_IMPOSSIBLE_TRAVEL", "GEOSPATIAL_ANOMALY", "PATTERN_CLONED_CARD", "DEVICE_MISMATCH", "HIGH_VALUE_ANOMALY"]
+BENFORD_PROBS = [math.log10(1 + 1/d) for d in range(1, 10)]
 
 class DataGenerator:
     def __init__(self):
         init_db()
         self.db = SessionLocal()
-        self.seed_atms()
-        # Cache for velocity checks
-        self.user_last_loc = {} # {user_id: (lat, lng, timestamp)}
-
-    def seed_atms(self):
-        if self.db.query(ATM).count() == 0:
-            print("Seeding ATMs...")
-            for atm_data in ATM_LOCATIONS:
-                atm = ATM(**atm_data)
-                self.db.add(atm)
+        self.seed_priors()
+        
+    def seed_priors(self):
+        """Seed initial Users, ATMs if empty."""
+        try:
+            if self.db.query(ATM).count() == 0:
+                print("Seeding ATMs...")
+                for atm_data in ATM_LOCATIONS:
+                    atm = ATM(**atm_data)
+                    self.db.add(atm)
+                    
+            if self.db.query(User).count() == 0:
+                print("Seeding Users...")
+                for i in range(50):
+                    user = User(
+                        user_id=f"IS_USER_{1000+i}",
+                        name=f"Citizen {i}",
+                        email=f"citizen{i}@kavach.in",
+                        phone=f"987654{1000+i}",
+                        account_numbers=["ACCT" + str(random.randint(10000000, 99999999))],
+                        risk_score=random.uniform(0, 0.2)
+                    )
+                    self.db.add(user)
             self.db.commit()
+        except Exception as e:
+            self.db.rollback()
+            print(f"Seeding Error: {e}")
+
+    def get_benford_amount(self):
+        """Generate amount following Benford's Law."""
+        leading_digit = random.choices(range(1, 10), weights=BENFORD_PROBS)[0]
+        # Scale: 100 to 50,000
+        magnitude = random.choice([100, 1000, 10000])
+        base = leading_digit * magnitude
+        # Add random noise
+        return base + random.randint(0, magnitude // 2)
 
     def generate_smart_transaction(self):
         """
-        Generates a transaction with "Crystal Clear" fraud logic injected dynamically.
+        Generates comprehensive transaction data matching new schema.
         """
-        # 1. Pick a random ATM
+        # Context
+        users = self.db.query(User).all()
+        if not users: self.seed_priors(); users = self.db.query(User).all()
+        user = random.choice(users)
+        
         atm = random.choice(ATM_LOCATIONS)
+        is_fraud = random.random() < 0.20 # 20% baseline fraud rate for DEMO VISIBILITY
         
-        # 2. Pick a User
-        user_id = f"User_{random.randint(1000, 1020)}" # Small pool to force collisions/relocation
-        
-        # 3. Determine if we want to FORCE a fraud scenario for demo
-        # 40% chance of fraud for visibility
-        is_fraud_scenario = random.random() < 0.4
-        
-        amount = random.choice([500, 1000, 2000, 5000, 10000, 20000])
-        txn_time = datetime.utcnow()
-        fraud_type = None
-        fraud_prob = 0.1
-        
-        # Track previous location for visualization
-        prev_loc = self.user_last_loc.get(user_id)
-        
-        # --- LOGIC: VELOCITY CHECK (Impossible Travel) ---
-        if prev_loc:
-            last_lat, last_lng, last_time = prev_loc
-            distance = haversine(last_lat, last_lng, atm['lat'], atm['lng'])
-            time_diff_hours = (txn_time - last_time).total_seconds() / 3600 + 0.001
-            speed = distance / time_diff_hours
+        if is_fraud:
+            # Inject Specific Patterns
+            fraud_scenario = random.choice(FRAUD_TYPES)
+            if fraud_scenario == "HIGH_VALUE_ANOMALY":
+                amount = random.randint(50000, 200000)
+            else:
+                amount = self.get_benford_amount()
             
-            if speed > IMPOSSIBLE_TRAVEL_SPEED_KMH:
-                is_fraud_scenario = True
-                fraud_type = "VELOCITY_IMPOSSIBLE_TRAVEL"
-                fraud_prob = 0.99
-                print(f"FRAUD: Impossible Travel. {speed:.0f} km/h")
-        
-        # --- LOGIC: ANOMALY (Sudden High Value in New City) ---
-        # Simulating "Home City" logic
-        # Assume User_1000 lives in Delhi. If he transacts in Chennai -> Flag
-        if user_id == "User_1000" and atm['city'] != "Delhi":
-             is_fraud_scenario = True
-             fraud_type = "GEOSPATIAL_ANOMALY"
-             fraud_prob = 0.85
-             amount = 45000 # Max out
-        
-        if is_fraud_scenario and not fraud_type:
-             # Genuine Random Fraud (e.g. Card Cloning pattern)
-             fraud_type = "PATTERN_CLONED_CARD"
-             fraud_prob = 0.92
+            # Geo jumps logic could go here
+        else:
+            fraud_scenario = None
+            amount = self.get_benford_amount()
 
-        # Update Last Location
-        self.user_last_loc[user_id] = (atm['lat'], atm['lng'], txn_time)
+        txn_id = str(uuid.uuid4())
+        timestamp = datetime.utcnow()
         
-        # Create Transaction Object
+        # Risk Logic (Simplified Rule Engine embedded for Generation)
+        fraud_prob = 0.95 if is_fraud else 0.02
+        status = "PROCESSING"
+        if fraud_prob > 0.9:
+            status = "BLOCKED"
+        
         txn = Transaction(
-            txn_id=str(uuid.uuid4()),
-            atm_id=atm['id'],
-            sender_id=user_id,
-            amount=amount,
-            timestamp=txn_time,
-            lat=atm['lat'],
-            lng=atm['lng'],
+            txn_id=txn_id,
+            user_id=user.user_id,
+            amount=float(amount),
+            currency="INR",
+            merchant="ATM Withdrawal" if "ATM" in atm['location'] else f"{random.choice(MERCHANT_CATEGORIES)} Store",
+            merchant_category=random.choice(MERCHANT_CATEGORIES),
+            timestamp=timestamp,
+            geo_lat=atm['lat'],
+            geo_lon=atm['lng'],
             city=atm['city'],
-            is_fraud=is_fraud_scenario,
+            device_fingerprint=f"DEV_{user.user_id}_{random.randint(1,2)}", # mostly consistent
+            ip_address="192.168.1.1",
+            features={
+                "velocity_24h": random.randint(0, 5),
+                "avg_amt_deviation": random.uniform(0.1, 3.0)
+            },
+            is_fraud=is_fraud,
             fraud_probability=fraud_prob,
-            fraud_type=fraud_type,
-            status="DECLINED_FRAUD" if fraud_prob > 0.9 else "SUCCESS"
+            fraud_type=fraud_scenario,
+            status=status
         )
         
-        # Commit to DB
         self.db.add(txn)
         self.db.commit()
         
-        # Convert to dict for SocketIO
         return {
             "txn_id": txn.txn_id,
+            "sender_id": txn.user_id,
             "amount": txn.amount,
-            "lat": txn.lat,
-            "lng": txn.lng,
-            "prev_lat": prev_loc[0] if prev_loc else None, # For Jump Vector
-            "prev_lng": prev_loc[1] if prev_loc else None,
             "location": atm['location'],
+            "lat": txn.geo_lat,
+            "lng": txn.geo_lon,
             "city": txn.city,
-            "sender_id": txn.sender_id,
-            "is_fraud": txn.is_fraud,
-            "fraud_probability": txn.fraud_probability,
+            "ip_address": txn.ip_address,
+            "device_id": txn.device_fingerprint,
             "fraud_type": txn.fraud_type,
+            "is_fraud": txn.is_fraud,
+            "fraud_prob": txn.fraud_probability,
+            "merchant": txn.merchant,
             "timestamp": txn.timestamp.isoformat(),
             "status": txn.status
         }
